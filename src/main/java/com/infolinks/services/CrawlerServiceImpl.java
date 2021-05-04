@@ -18,6 +18,7 @@ import javax.annotation.PostConstruct;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
+import java.net.ConnectException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Duration;
@@ -42,7 +43,8 @@ public class CrawlerServiceImpl implements CrawlerService {
     private Map<String, Set<Ads>> missingLinesToSiteMap = new ConcurrentHashMap<>();
     private Map<String, SiteStatusEnum> siteStatusMap = new ConcurrentHashMap<>();
     private Map<Ads, Set<String>> lineToUrlSiteMap = new ConcurrentHashMap<>(); //TODO we need to put it only the site that including in master or all sites that appears in ads.txt?
-    private Set<String> siteWithoutAdsFileSet = new HashSet<>();
+    private Set<String> siteWithoutAdsFileSet = ConcurrentHashMap.newKeySet();
+    private Map<String, String> siteToPublisherIdMap = new ConcurrentHashMap<>();
 
     @Autowired
     private RestTemplate restTemplate;
@@ -52,9 +54,7 @@ public class CrawlerServiceImpl implements CrawlerService {
 
     @PostConstruct
     private void init() throws IOException {
-        Map<String, String> siteToPublisherIdMap = new HashMap<>();
-
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime start = LocalDateTime.now();
         String infolinksSitesPath = InfoUtils.getInfolinksSitesPath();
         Reader siteReader = Files.newBufferedReader(Paths.get(infolinksSitesPath));
         CsvToBean<ClientInfo> clientInfoCsvToBean = new CsvToBeanBuilder(siteReader)
@@ -63,7 +63,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                 .build();
         List<ClientInfo> clientInfoList = new ArrayList<>();
         clientInfoCsvToBean.forEach((clientInfo -> clientInfoList.add(clientInfo)));
-        clientInfoList.forEach(clientInfo -> logger.info(clientInfo));
+//        clientInfoList.forEach(clientInfo -> logger.info(clientInfo));
         clientInfoList.forEach(clientInfo -> siteToPublisherIdMap.put(clientInfo.getSiteURL(), clientInfo.getPublisherId()));
         String infolinksMasterPath = InfoUtils.getInfolinksMasterPath();
         Reader masterReader = Files.newBufferedReader(Paths.get(infolinksMasterPath));
@@ -72,32 +72,23 @@ public class CrawlerServiceImpl implements CrawlerService {
                 .withIgnoreLeadingWhiteSpace(true)
                 .build();
 
+        List<Ads> adsList = new ArrayList<>();
+        adsCsvToBean.forEach(ads -> adsList.add(ads));
+//        adsList.forEach(ads -> logger.info(ads));
 
         clientInfoList.stream()
 //                .parallel()
-                .forEach(clientInfo -> infoScheduler.scheduleNow(() -> processSite(clientInfo, adsCsvToBean, siteToPublisherIdMap)));
-        logger.info("done. total duration: {}", Duration.between(now, LocalDateTime.now()));
+                .forEach(clientInfo -> infoScheduler.scheduleNow(() -> processSite(clientInfo, adsList, siteToPublisherIdMap)));
+        logger.info("done. total duration: {}", Duration.between(start, LocalDateTime.now()));
     }
 
-    private void processSite(ClientInfo clientInfo, CsvToBean<Ads> adsCsvToBean, Map<String, String> siteToPublisherIdMap) {
-        logger.info("start to process site {}", clientInfo.getSiteURL());
+    private void processSite(ClientInfo clientInfo, List<Ads> adsList, Map<String, String> siteToPublisherIdMap) {
+        logger.info("start to process site {}", clientInfo);
         try {
-            Set<Ads> adsHashSet = new HashSet<>();
-            adsCsvToBean.forEach((ads -> {
-                if (MY_PUBLISHER.equals(ads.getDomain())) {
-                    String publisherId = siteToPublisherIdMap.get(clientInfo.getSiteURL());
-                    logger.info("set {} to publisherId: {}", MY_PUBLISHER, publisherId);
-                    ads.setAccountId(publisherId);
-                }
-                adsHashSet.add(ads);
-            }));
-//                        adsHashSet.forEach(ads -> logger.info(ads));
-            logger.info(clientInfo.toString());
+            Set<Ads> adsHashSet = setMyPublisher(clientInfo, adsList, siteToPublisherIdMap);
             String siteURL = clientInfo.getSiteURL().replace(HTTP, HTTPS);
 //                        String siteURL = "https://dividaat.com/"; //for HttpClientErrorException
             String result = restTemplate.getForObject(siteURL + ADS_FILE_PATH, String.class);
-//                String result = restTemplate.getForObject("https://www.yahoo.com/ads.txt", String.class);
-//                String result = restTemplate.getForObject("http://smallscreenscoop.com/ads.txt", String.class);
             List<String> lines = IOUtils.readLines(new StringReader(result));
 //                lines.forEach(line -> logger.info("result from {} : {}", clientInfo.getSiteURL(), line));
             for (String line : lines) {
@@ -105,10 +96,10 @@ public class CrawlerServiceImpl implements CrawlerService {
                 if (!line.startsWith(ADS_COMMENT_SIGN) && line.matches(String.format(".*%1$s.*%2$s.*%2$s.*", DOT_URL_SITE, CSV_SPLITTER))) {
                     String[] split = line.split(CSV_SPLITTER);
                     String optionalValue = null;
-                    if (split.length>3){
-                        optionalValue= split[3];
+                    if (split.length > 3) {
+                        optionalValue = split[3];
                     }
-                    Ads ads1 = new Ads(split[0], split[1], split[2],optionalValue);
+                    Ads ads1 = new Ads(split[0], split[1], split[2], optionalValue);
                     lineToUrlSiteMap.computeIfAbsent(ads1, v -> new HashSet<>()).add(clientInfo.getSiteURL());
                     if (adsHashSet.contains(ads1)) {
                         adsHashSet.remove(ads1);
@@ -118,24 +109,68 @@ public class CrawlerServiceImpl implements CrawlerService {
 
             if (!adsHashSet.isEmpty()) {
                 handleMissingLine(clientInfo, adsHashSet);
+            } else {
+                setOkStatus(clientInfo);
             }
-        } catch (HttpClientErrorException.NotFound httpClientErrorException) {
-            handleFileNotFound(clientInfo, httpClientErrorException);
+        } catch (ConnectException connectException) {
+            handleConnectionTimeOut(clientInfo, connectException);
+//        } catch (HttpClientErrorException.NotFound | IOException httpClientErrorException) {
+        } catch (HttpClientErrorException.NotFound notFound) {
+            handleFileNotFound(clientInfo, notFound);
+        } catch (IOException ioException) {
+            handleIoException(clientInfo, ioException);
+        } catch (ConcurrentModificationException e) {
+            logger.fatal(e);
         } catch (Exception e) {
             handleOtherExceptions(clientInfo, e);
         }
     }
 
-    private void handleOtherExceptions(ClientInfo clientInfo, Exception e) {
-//        infoScheduler.scheduleNow(() -> {
-        logger.error("fail to read ads.txt from: {}. Exception:{}", clientInfo.getSiteURL(), e);
-        siteStatusMap.put(clientInfo.getSiteURL(), SiteStatusEnum.ConnectionError);
+    private Set<Ads> setMyPublisher(ClientInfo clientInfo, List<Ads> adsList, Map<String, String> siteToPublisherIdMap) {
+        Set<Ads> adsHashSet = new HashSet<>(adsList); //we copy it because of it is used for specific site (if we use with one hashset for all - we override the publisherId of MY_PUBLISHER)
+        Iterator<Ads> iterator = adsHashSet.stream().iterator();
+        while (iterator.hasNext()){
+            Ads ads = iterator.next();
+            if (MY_PUBLISHER.equals(ads.getDomain())) {
+                String publisherId = siteToPublisherIdMap.get(clientInfo.getSiteURL());
+                logger.info("set {} to publisherId: {}", MY_PUBLISHER, publisherId);
+                ads.setAccountId(publisherId);
+                break;
+            }
+        }
+//          adsHashSet.forEach(ads -> logger.info(ads));
+        return adsHashSet;
+    }
+
+    private void handleIoException(ClientInfo clientInfo, IOException ioException) {
+        //        infoScheduler.scheduleNow(() -> {
+        logger.error("fail during trying to read ads.txt from: {}. connectException:", clientInfo.getSiteURL(), ioException);
+        siteStatusMap.put(clientInfo.getSiteURL(), SiteStatusEnum.IoException);
 //        });
     }
 
-    private void handleFileNotFound(ClientInfo clientInfo, HttpClientErrorException.NotFound httpClientErrorException) {
+    private void setOkStatus(ClientInfo clientInfo) {
+        logger.info("Site {} status: {}", clientInfo.getSiteURL(), SiteStatusEnum.Ok);
+        siteStatusMap.put(clientInfo.getSiteURL(), SiteStatusEnum.Ok);
+    }
+
+    private void handleConnectionTimeOut(ClientInfo clientInfo, ConnectException connectException) {
+        //        infoScheduler.scheduleNow(() -> {
+        logger.error("fail to read ads.txt from: {}. connectException:", clientInfo.getSiteURL(), connectException);
+        siteStatusMap.put(clientInfo.getSiteURL(), SiteStatusEnum.ConnectionTimeOut);
+//        });
+    }
+
+    private void handleOtherExceptions(ClientInfo clientInfo, Exception httpClientErrorException) {
 //        infoScheduler.scheduleNow(() -> {
-        logger.error("ads.txt file not found: {}. Exception:{}", clientInfo.getSiteURL(), httpClientErrorException);
+        logger.error("fail to read ads.txt from: {}. HttpClientErrorException:", clientInfo.getSiteURL(), httpClientErrorException);
+        siteStatusMap.put(clientInfo.getSiteURL(), SiteStatusEnum.HttpClientErrorException);
+//        });
+    }
+
+    private void handleFileNotFound(ClientInfo clientInfo, Exception httpClientErrorException) {
+//        infoScheduler.scheduleNow(() -> {
+        logger.error("ads.txt file not found: {}. NotFound:", clientInfo.getSiteURL(), httpClientErrorException);
         siteStatusMap.put(clientInfo.getSiteURL(), SiteStatusEnum.AdsFileNotFound);
         siteWithoutAdsFileSet.add(clientInfo.getSiteURL());
 //        });
@@ -143,9 +178,9 @@ public class CrawlerServiceImpl implements CrawlerService {
 
     private void handleMissingLine(ClientInfo clientInfo, Set<Ads> missingLine) {
 //        infoScheduler.scheduleNow(() -> {
-        logger.error("missing site/s {} from: {}", missingLine, clientInfo.getSiteURL());
+        logger.error("the following sites are missing from {}: {}", clientInfo.getSiteURL(), missingLine);
         missingLinesToSiteMap.put(clientInfo.getSiteURL(), missingLine);
-        siteStatusMap.put(clientInfo.getSiteURL(), SiteStatusEnum.MissingALine);
+        siteStatusMap.put(clientInfo.getSiteURL(), SiteStatusEnum.MissingLine);
 //        });
     }
 
