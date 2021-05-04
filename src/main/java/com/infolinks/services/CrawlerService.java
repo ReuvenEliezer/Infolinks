@@ -7,7 +7,7 @@ import java.util.Set;
 
 public interface CrawlerService {
 
-    Set<String> getAllSite(String siteURL);
+    Set<String> getAllSite(Ads ads);
 
     Set<Ads> getAllMissingLines(String siteURL);
 

@@ -22,10 +22,12 @@ public class Ads {
     public Ads() {
     }
 
-    public Ads(String domain, String accountId, String adsType) {
-        this.domain = domain;
-        this.accountId = accountId;
-        this.adsType = adsType;
+    public Ads(String domain, String accountId, String adsType, String optional) {
+        this.domain = domain.trim();
+        this.accountId = accountId.trim();
+        this.adsType = adsType.trim();
+        if (optional != null)
+            this.optional = optional.trim();
     }
 
     public String getDomain() {
