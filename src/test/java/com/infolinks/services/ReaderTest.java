@@ -2,6 +2,7 @@ package com.infolinks.services;
 
 import com.infolinks.app.InfolinksApp;
 import com.infolinks.entities.Ads;
+import com.infolinks.entities.SiteStatusEnum;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -24,13 +25,15 @@ public class ReaderTest {
     public void test() throws InterruptedException {
         Thread.sleep(20000);
 
-//        String site ="http://www.indiaeducation.net";
-        Ads ads = new Ads("Pubmatic.com", "60809","RESELLER","5d62403b186f2ace");
+        String site = "http://www.indiaeducation.net";
+        Ads ads = new Ads("Pubmatic.com", "60809", "RESELLER", "5d62403b186f2ace");
         Set<String> allSite = crawlerService.getAllSite(ads);
-//        Set<Ads> allMissingLines = crawlerService.getAllMissingLines(site);
-//        SiteStatusEnum status = crawlerService.getStatus(site);
+        Assert.assertTrue(allSite.size() > 100); //552
+        Set<Ads> allMissingLines = crawlerService.getAllMissingLines("http://kitaabghar.net");
+        Assert.assertEquals(6, allMissingLines.size());
+        Assert.assertEquals(SiteStatusEnum.MissingLine, crawlerService.getStatus(site));
+        Assert.assertEquals(SiteStatusEnum.NotSet, crawlerService.getStatus("http://dividaat.com"));
         Set<String> allSiteWithoutAdsFile = crawlerService.getAllSiteWithoutAdsFile();
-        Assert.assertTrue(allSite.size()>100); //552
-        Assert.assertTrue(allSiteWithoutAdsFile.size()>100); //542
+        Assert.assertTrue(allSiteWithoutAdsFile.size() > 100); //542
     }
 }

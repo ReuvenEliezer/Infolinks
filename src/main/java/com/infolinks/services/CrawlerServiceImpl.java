@@ -32,7 +32,7 @@ public class CrawlerServiceImpl implements CrawlerService {
     private static final Logger logger = LogManager.getLogger(CrawlerServiceImpl.class);
 
 
-    private static final String MY_PUBLISHER = "Infolinks.com";
+    private static final String MY_PUBLISHER_DOMAIN = "Infolinks.com";
     private static final String ADS_FILE_PATH = "/ads.txt";
     private static final String HTTPS = "https";
     private static final String HTTP = "http";
@@ -72,20 +72,20 @@ public class CrawlerServiceImpl implements CrawlerService {
                 .withIgnoreLeadingWhiteSpace(true)
                 .build();
 
-        List<Ads> adsList = new ArrayList<>();
-        adsCsvToBean.forEach(ads -> adsList.add(ads));
+        Map<String, Ads> domainToAdsMap = new HashMap<>();
+        adsCsvToBean.forEach(ads -> domainToAdsMap.put(ads.getDomain(), ads));
 //        adsList.forEach(ads -> logger.info(ads));
 
         clientInfoList.stream()
 //                .parallel()
-                .forEach(clientInfo -> infoScheduler.scheduleNow(() -> processSite(clientInfo, adsList, siteToPublisherIdMap)));
+                .forEach(clientInfo -> infoScheduler.scheduleNow(() -> processSite(clientInfo, domainToAdsMap)));
         logger.info("done. total duration: {}", Duration.between(start, LocalDateTime.now()));
     }
 
-    private void processSite(ClientInfo clientInfo, List<Ads> adsList, Map<String, String> siteToPublisherIdMap) {
+    private void processSite(ClientInfo clientInfo, Map<String, Ads> domainToAdsMap) {
         logger.info("start to process site {}", clientInfo);
         try {
-            Set<Ads> adsHashSet = setMyPublisher(clientInfo, adsList, siteToPublisherIdMap);
+            Set<Ads> adsHashSet = setMyPublisher(clientInfo, domainToAdsMap);
             String siteURL = clientInfo.getSiteURL().replace(HTTP, HTTPS);
 //                        String siteURL = "https://dividaat.com/"; //for HttpClientErrorException
             String result = restTemplate.getForObject(siteURL + ADS_FILE_PATH, String.class);
@@ -126,18 +126,13 @@ public class CrawlerServiceImpl implements CrawlerService {
         }
     }
 
-    private Set<Ads> setMyPublisher(ClientInfo clientInfo, List<Ads> adsList, Map<String, String> siteToPublisherIdMap) {
-        Set<Ads> adsHashSet = new HashSet<>(adsList); //we copy it because of it is used for specific site (if we use with one hashset for all - we override the publisherId of MY_PUBLISHER)
-        Iterator<Ads> iterator = adsHashSet.stream().iterator();
-        while (iterator.hasNext()){
-            Ads ads = iterator.next();
-            if (MY_PUBLISHER.equals(ads.getDomain())) {
-                String publisherId = siteToPublisherIdMap.get(clientInfo.getSiteURL());
-                logger.info("set {} to publisherId: {}", MY_PUBLISHER, publisherId);
-                ads.setAccountId(publisherId);
-                break;
-            }
-        }
+    private Set<Ads> setMyPublisher(ClientInfo clientInfo, Map<String, Ads> domainToAdsMap) {
+        Ads ads = domainToAdsMap.get(MY_PUBLISHER_DOMAIN);
+        String publisherId = siteToPublisherIdMap.get(clientInfo.getSiteURL());
+        logger.info("set {} to publisherId: {}", MY_PUBLISHER_DOMAIN, publisherId);
+        ads.setAccountId(publisherId);
+        Set<Ads> adsHashSet = new HashSet<>();
+        adsHashSet.addAll(domainToAdsMap.values());
 //          adsHashSet.forEach(ads -> logger.info(ads));
         return adsHashSet;
     }
@@ -192,12 +187,14 @@ public class CrawlerServiceImpl implements CrawlerService {
 //                logger.info("{} with size {}", entry.getKey(), entry.getValue().size());
 //            }
 //        }
-        return lineToUrlSiteMap.get(ads);
+        Set<String> result = lineToUrlSiteMap.get(ads);
+        return result != null ? result : new HashSet<>();
     }
 
     @Override
     public Set<Ads> getAllMissingLines(String siteURL) {
-        return missingLinesToSiteMap.get(siteURL);
+        Set<Ads> result = missingLinesToSiteMap.get(siteURL);
+        return result != null ? result : new HashSet<>();
     }
 
     @Override
@@ -207,6 +204,7 @@ public class CrawlerServiceImpl implements CrawlerService {
 
     @Override
     public SiteStatusEnum getStatus(String siteURL) {
-        return siteStatusMap.get(siteURL);
+        SiteStatusEnum siteStatusEnum = siteStatusMap.get(siteURL);
+        return siteStatusEnum != null ? siteStatusEnum : SiteStatusEnum.NotSet;
     }
 }
