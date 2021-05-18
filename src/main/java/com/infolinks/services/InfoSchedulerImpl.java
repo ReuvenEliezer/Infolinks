@@ -8,7 +8,6 @@ import org.springframework.stereotype.Service;
 import javax.annotation.PostConstruct;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 @Service
 public class InfoSchedulerImpl implements InfoScheduler {
@@ -27,8 +26,8 @@ public class InfoSchedulerImpl implements InfoScheduler {
     }
 
     @Override
-    public void scheduleNow(Runnable runnable) {
-        executorService.schedule(runnable, 0, TimeUnit.MILLISECONDS);
+    public void executeNow(Runnable runnable) {
+        executorService.execute(runnable);
     }
 
 }

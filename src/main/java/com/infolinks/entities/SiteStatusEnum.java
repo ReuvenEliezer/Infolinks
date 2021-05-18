@@ -5,6 +5,7 @@ public enum SiteStatusEnum {
     Ok,
     MissingLine,
     AdsFileNotFound,
+    Unauthorized,
     ConnectionTimeOut,
     IoException,
     HttpClientErrorException,
