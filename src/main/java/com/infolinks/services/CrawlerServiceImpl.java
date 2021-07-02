@@ -225,6 +225,7 @@ public class CrawlerServiceImpl implements CrawlerService {
             if (split.length == 2) {
                 clientInfoVariables.addSubdomain(line.split(VARIABLE_SPLITTER)[1]);
                 //TODO call processAdsSite for each subdomain only once
+//                processAdsSite();
             } else logger.error("failed to read subdomain value of site {}", clientInfo.getSiteURL());
         }
     }
