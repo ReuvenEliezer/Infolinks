@@ -14,6 +14,7 @@ public class InfoSchedulerImpl implements InfoScheduler {
 
     private final static Logger logger = LogManager.getLogger(CrawlerServiceImpl.class);
 
+
     private ScheduledExecutorService executorService;
 
     @Value("${scheduler.thread.pool.size}")
